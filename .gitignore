@@ -1,0 +1,12 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.secret
+.env
+
+# Virtual environments
+.venv
+gymmini.sqlite3
