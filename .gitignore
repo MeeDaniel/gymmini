@@ -5,7 +5,7 @@ build/
 dist/
 wheels/
 *.secret
-.env
+*.env
 
 # Virtual environments
 .venv
