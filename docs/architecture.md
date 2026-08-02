@@ -20,8 +20,10 @@ Gymmini/
 ├── src/
 │   ├── api/          # FastAPI роутеры (в будущем для web-фронта)
 │   ├── bot/          # Логика aiogram (хендлеры, клавиатуры, состояния)
+│   │   ├── handlers/ # Обработчики команд разделены по модулям
+│   │   ├── callbacks.py # CallbackData фабрики
+│   │   ├── keyboards.py # Инлайн клавиатуры
 │   │   ├── messages.py # Централизованное хранилище всех текстов бота
-│   │   └── handlers.py # Обработчики команд и сообщений
 │   ├── core/         # Конфигурация (config.py на базе pydantic-settings)
 │   ├── db/           # Подключение к БД, базовая модель (base.py)
 │   ├── models/       # SQLAlchemy модели (user.py, workout.py, exercise.py)
@@ -36,12 +38,12 @@ Gymmini/
 
 ## База данных (Сущности)
 
-1. **User** (`users`): Пользователь. Имеет `telegram_id` и `telegram_alias`.
+1. **User** (`users`): Пользователь. Имеет `telegram_id` (nullable для веба) и `telegram_alias`.
 2. **Workout** (`workouts`): *Шаблон* тренировки. Содержит базовое описание (например, "День ног").
-3. **Exercise** (`exercises`): *Шаблон* упражнения. Содержит описание и путь к картинке в `media/`.
-4. **WorkoutNote** (`workout_notes`): *Проведенная* тренировка. Копируется из `Workout` при начале тренировки. Имеет дату и время. Привязана к `Workout` для ведения статистики.
-5. **ExerciseNote** (`exercise_notes`): *Запланированное/выполненное* упражнение в рамках конкретной `WorkoutNote`.
-6. **Set** (`sets`): Подход. Привязан к `ExerciseNote`. Содержит количество повторений, вес, время или дистанцию.
+3. **Exercise** (`exercises`): *Шаблон* упражнения. Содержит описание, `type` (силовая, кардио и т.д.) и путь к картинке в `media/`.
+4. **WorkoutNote** (`workout_notes`): *Проведенная* тренировка. Содержит `started_at` (дата и время начала).
+5. **ExerciseNote** (`exercise_notes`): *Запланированное/выполненное* упражнение в рамках `WorkoutNote`. Имеет `sort_order` для сохранения порядка.
+6. **Set** (`sets`): Подход. Привязан к `ExerciseNote`. Поля заполняются в зависимости от типа упражнения (reps, weight, distance, duration). Имеет `sort_order`.
 
 ## Правила разработки
 

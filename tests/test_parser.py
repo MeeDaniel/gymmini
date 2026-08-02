@@ -1,0 +1,42 @@
+import pytest
+from src.services.utils import parse_set_input
+from src.models.exercise import ExerciseType
+
+def test_parse_strength():
+    assert parse_set_input("10x50.5", ExerciseType.strength) == {"reps": 10, "weight": 50.5}
+    assert parse_set_input("10 x 50,5", ExerciseType.strength) == {"reps": 10, "weight": 50.5}
+    assert parse_set_input("10 - 50", ExerciseType.strength) == {"reps": 10, "weight": 50.0}
+    assert parse_set_input("10 50", ExerciseType.strength) == {"reps": 10, "weight": 50.0}
+    assert parse_set_input("10 х 50 кг", ExerciseType.strength) == {"reps": 10, "weight": 50.0}
+    assert parse_set_input("15 раз x 20.5 kg", ExerciseType.strength) == {"reps": 15, "weight": 20.5}
+    assert parse_set_input("abc", ExerciseType.strength) == {}
+    assert parse_set_input("10", ExerciseType.strength) == {}
+
+def test_parse_cardio():
+    assert parse_set_input("5-20", ExerciseType.cardio) == {"distance": 5.0, "duration": 20.0}
+    assert parse_set_input("5.5 км 20 мин", ExerciseType.cardio) == {"distance": 5500.0, "duration": 1200.0}
+    assert parse_set_input("2.5км 12м30с", ExerciseType.cardio) == {"distance": 2500.0, "duration": 750.0}
+    assert parse_set_input("500м 45с", ExerciseType.cardio) == {"distance": 500.0, "duration": 45.0}
+    assert parse_set_input("10", ExerciseType.cardio) == {}
+
+def test_parse_bodyweight():
+    assert parse_set_input("15", ExerciseType.bodyweight) == {"reps": 15}
+    assert parse_set_input("20 раз", ExerciseType.bodyweight) == {"reps": 20}
+    assert parse_set_input("abc", ExerciseType.bodyweight) == {}
+
+def test_parse_timed():
+    assert parse_set_input("60", ExerciseType.timed) == {"duration": 60.0}
+    assert parse_set_input("60 мин", ExerciseType.timed) == {"duration": 3600.0}
+    assert parse_set_input("abc", ExerciseType.timed) == {}
+
+def test_format_set_text():
+    from src.bot.formatters import format_set_text
+    class DummySet:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+    assert format_set_text(DummySet(reps=10, weight=50.0)) == "10 повторений, 50 кг"
+    assert format_set_text(DummySet(reps=15)) == "15 повторений"
+    assert format_set_text(DummySet(distance=500.0, duration=45.0)) == "500 м, 45 сек"
+    assert format_set_text(DummySet(distance=2500.0, duration=750.0)) == "2.5 км, 12 мин 30 сек"
+

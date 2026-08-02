@@ -6,8 +6,8 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
-    telegram_alias: Mapped[str | None] = mapped_column(String, nullable=True)
+    telegram_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, index=True, nullable=True)
+    telegram_alias: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     workouts: Mapped[list["Workout"]] = relationship(back_populates="user")
     exercises: Mapped[list["Exercise"]] = relationship(back_populates="user")
