@@ -22,4 +22,4 @@ RUN uv sync --frozen --no-dev
 COPY . .
 
 # Команда запуска
-CMD ["python", "main.py"]
+CMD ["sh", "-c", "alembic upgrade head && python main.py"]
