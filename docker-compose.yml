@@ -1,0 +1,12 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Переопределяем путь к БД, чтобы он указывал на папку data
+      - DB_URL=sqlite+aiosqlite:///./data/gymmini.sqlite3
+    volumes:
+      - ./data:/app/data
+      - ./media:/app/media
