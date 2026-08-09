@@ -4,7 +4,9 @@ from sqlalchemy.orm import selectinload
 from src.models.exercise import Exercise, ExerciseNote, Set, ExerciseType
 
 async def create_exercise(session: AsyncSession, user_id: int, name: str, ex_type: ExerciseType, description: str | None = None, image_path: str | None = None) -> Exercise:
-    exercise = Exercise(user_id=user_id, name=name, type=ex_type, description=description, image_path=image_path)
+    if not name or not name.strip():
+        raise ValueError("Имя упражнения не может быть пустым.")
+    exercise = Exercise(user_id=user_id, name=name.strip(), type=ex_type, description=description, image_path=image_path)
     session.add(exercise)
     await session.commit()
     await session.refresh(exercise)
@@ -37,15 +39,19 @@ async def check_exercise_usage(session: AsyncSession, exercise_id: int) -> tuple
     return template_count, history_count
 
 async def delete_exercise(session: AsyncSession, exercise_id: int) -> tuple[bool, str | None]:
+    # Lock exercise to prevent TOCTOU race condition
+    ex_res = await session.execute(select(Exercise).where(Exercise.id == exercise_id).with_for_update())
+    ex = ex_res.scalar_one_or_none()
+    if not ex:
+        return False, "Упражнение не найдено."
+
     template_count, history_count = await check_exercise_usage(session, exercise_id)
     if template_count > 0 or history_count > 0:
         return False, f"⚠️ Невозможно удалить упражнение: оно используется в {template_count} шаблонах и {history_count} записях истории. Сначала удалите его оттуда."
-    ex = await get_exercise(session, exercise_id)
-    if ex:
-        await session.delete(ex)
-        await session.commit()
-        return True, None
-    return False, "Упражнение не найдено."
+
+    await session.delete(ex)
+    await session.commit()
+    return True, None
 
 async def create_exercise_note_from_template(
     session: AsyncSession, 
@@ -75,8 +81,18 @@ async def add_set_to_exercise_note(
     duration: float | None = None, 
     distance: float | None = None
 ) -> Set:
+    if weight is not None and weight < 0: raise ValueError("Weight cannot be negative")
+    if reps is not None and reps < 0: raise ValueError("Reps cannot be negative")
+    if duration is not None and duration < 0: raise ValueError("Duration cannot be negative")
+    if distance is not None and distance < 0: raise ValueError("Distance cannot be negative")
+    
+    # Get max sort_order
+    res = await session.execute(select(Set.sort_order).where(Set.exercise_note_id == exercise_note_id).order_by(Set.sort_order.desc()).limit(1))
+    max_order = res.scalar_one_or_none() or 0
+
     new_set = Set(
         exercise_note_id=exercise_note_id,
+        sort_order=max_order + 1,
         reps=reps,
         weight=weight,
         duration=duration,

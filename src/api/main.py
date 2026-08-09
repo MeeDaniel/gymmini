@@ -4,11 +4,14 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from src.core.config import settings
 
+from src.db.database import engine
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Ensure media directory exists
     os.makedirs("media", exist_ok=True)
     yield
+    await engine.dispose()
 
 app = FastAPI(title="Gymmini", lifespan=lifespan)
 

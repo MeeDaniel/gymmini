@@ -9,6 +9,6 @@ class User(Base):
     telegram_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, index=True, nullable=True)
     telegram_alias: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    workouts: Mapped[list["Workout"]] = relationship(back_populates="user")
-    exercises: Mapped[list["Exercise"]] = relationship(back_populates="user")
-    workout_notes: Mapped[list["WorkoutNote"]] = relationship(back_populates="user")
+    workouts: Mapped[list["Workout"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    exercises: Mapped[list["Exercise"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    workout_notes: Mapped[list["WorkoutNote"]] = relationship(back_populates="user", cascade="all, delete-orphan")

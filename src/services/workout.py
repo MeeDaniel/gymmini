@@ -79,6 +79,9 @@ from src.models.workout import workout_exercises
 from sqlalchemy import insert, delete, update
 
 async def add_exercise_to_workout(session: AsyncSession, workout_id: int, exercise_id: int) -> None:
+    # Lock workout to prevent race conditions
+    await session.execute(select(Workout.id).where(Workout.id == workout_id).with_for_update())
+    
     # Check if already exists
     result = await session.execute(
         select(workout_exercises.c.exercise_id)
@@ -110,6 +113,8 @@ async def remove_exercise_from_workout(session: AsyncSession, workout_id: int, e
 
 async def move_exercise_in_workout(session: AsyncSession, workout_id: int, exercise_id: int, direction: int) -> None:
     # direction: -1 for UP, 1 for DOWN
+    await session.execute(select(Workout.id).where(Workout.id == workout_id).with_for_update())
+    
     result = await session.execute(
         select(workout_exercises.c.exercise_id, workout_exercises.c.sort_order)
         .where(workout_exercises.c.workout_id == workout_id)
@@ -150,7 +155,6 @@ async def add_exercise_to_workout_note(session: AsyncSession, note_id: int, exer
     await session.commit()
 
 async def delete_workout(session: AsyncSession, workout_id: int):
-    await session.execute(delete(workout_exercises).where(workout_exercises.c.workout_id == workout_id))
     workout = await get_workout(session, workout_id)
     if workout:
         await session.delete(workout)
@@ -159,9 +163,6 @@ async def delete_workout(session: AsyncSession, workout_id: int):
 async def delete_workout_note(session: AsyncSession, note_id: int):
     note = await get_workout_note(session, note_id)
     if note:
-        for ex_note in note.exercise_notes:
-            await session.execute(delete(Set).where(Set.exercise_note_id == ex_note.id))
-            await session.delete(ex_note)
         await session.delete(note)
         await session.commit()
 
@@ -169,6 +170,5 @@ async def delete_exercise_note_from_workout(session: AsyncSession, ex_note_id: i
     result = await session.execute(select(ExerciseNote).where(ExerciseNote.id == ex_note_id))
     ex_note = result.scalar_one_or_none()
     if ex_note:
-        await session.execute(delete(Set).where(Set.exercise_note_id == ex_note_id))
         await session.delete(ex_note)
         await session.commit()
