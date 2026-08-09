@@ -1,8 +1,8 @@
-"""Refactoring models
+"""Initial schema
 
-Revision ID: 63790647ce31
+Revision ID: bca5d1f5a5ba
 Revises: 
-Create Date: 2026-07-25 11:32:39.069912
+Create Date: 2026-08-09 23:27:44.789505
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '63790647ce31'
+revision: str = 'bca5d1f5a5ba'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -27,7 +27,9 @@ def upgrade() -> None:
     sa.Column('telegram_alias', sa.String(length=255), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index(op.f('ix_users_telegram_id'), 'users', ['telegram_id'], unique=True)
+    with op.batch_alter_table('users', schema=None) as batch_op:
+        batch_op.create_index(batch_op.f('ix_users_telegram_id'), ['telegram_id'], unique=True)
+
     op.create_table('exercises',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('user_id', sa.Integer(), nullable=False),
@@ -50,8 +52,8 @@ def upgrade() -> None:
     sa.Column('workout_id', sa.Integer(), nullable=False),
     sa.Column('exercise_id', sa.Integer(), nullable=False),
     sa.Column('sort_order', sa.Integer(), nullable=True),
-    sa.ForeignKeyConstraint(['exercise_id'], ['exercises.id'], ),
-    sa.ForeignKeyConstraint(['workout_id'], ['workouts.id'], ),
+    sa.ForeignKeyConstraint(['exercise_id'], ['exercises.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['workout_id'], ['workouts.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('workout_id', 'exercise_id')
     )
     op.create_table('workout_notes',
@@ -61,8 +63,8 @@ def upgrade() -> None:
     sa.Column('brief', sa.String(length=255), nullable=False),
     sa.Column('description', sa.Text(), nullable=True),
     sa.Column('started_at', sa.DateTime(), nullable=False),
-    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
-    sa.ForeignKeyConstraint(['workout_id'], ['workouts.id'], ),
+    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['workout_id'], ['workouts.id'], ondelete='SET NULL'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_table('exercise_notes',
@@ -80,7 +82,7 @@ def upgrade() -> None:
     sa.Column('exercise_note_id', sa.Integer(), nullable=False),
     sa.Column('sort_order', sa.Integer(), nullable=False),
     sa.Column('reps', sa.Integer(), nullable=True),
-    sa.Column('weight', sa.Float(), nullable=True),
+    sa.Column('weight', sa.Numeric(precision=6, scale=2), nullable=True),
     sa.Column('duration', sa.Float(), nullable=True),
     sa.Column('distance', sa.Float(), nullable=True),
     sa.ForeignKeyConstraint(['exercise_note_id'], ['exercise_notes.id'], ),
@@ -98,6 +100,8 @@ def downgrade() -> None:
     op.drop_table('workout_exercises')
     op.drop_table('workouts')
     op.drop_table('exercises')
-    op.drop_index(op.f('ix_users_telegram_id'), table_name='users')
+    with op.batch_alter_table('users', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_users_telegram_id'))
+
     op.drop_table('users')
     # ### end Alembic commands ###
