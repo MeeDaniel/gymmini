@@ -15,18 +15,15 @@ def parse_duration_string(text: str) -> float | None:
     
     if hours_match or mins_match or secs_match:
         total_seconds = 0.0
-        if hours_match:
-            total_seconds += float(hours_match.group(1)) * 3600
-        if mins_match:
-            total_seconds += float(mins_match.group(1)) * 60
-        if secs_match:
-            total_seconds += float(secs_match.group(1))
-        return total_seconds
+        if hours_match: total_seconds += float(hours_match.group(1)) * 3600
+        if mins_match: total_seconds += float(mins_match.group(1)) * 60
+        if secs_match: total_seconds += float(secs_match.group(1))
+        return total_seconds if total_seconds > 0 else None
         
     # If raw number without units
     try:
         val = float(text.replace(',', '.'))
-        return val
+        return val if val > 0 else None
     except ValueError:
         return None
 
@@ -47,7 +44,10 @@ def parse_set_input(text: str, exercise_type: ExerciseType) -> dict:
         parts = [p for p in re.split(split_pattern, cleaned.strip()) if p]
         if len(parts) >= 2:
             try:
-                return {"reps": int(parts[0]), "weight": float(parts[1])}
+                weight = float(parts[0])
+                reps = int(parts[1])
+                if reps > 0 and weight > 0:
+                    return {"reps": reps, "weight": weight}
             except ValueError:
                 pass
 
@@ -59,7 +59,10 @@ def parse_set_input(text: str, exercise_type: ExerciseType) -> dict:
             parts = [p for p in re.split(r'[\s\-xXхХ\*]+', text.strip()) if p]
             if len(parts) >= 2:
                 try:
-                    return {"distance": float(parts[0]), "duration": float(parts[1])}
+                    dist = float(parts[0])
+                    dur = float(parts[1])
+                    if dist > 0 and dur > 0:
+                        return {"distance": dist, "duration": dur}
                 except ValueError:
                     pass
         else:
@@ -81,20 +84,23 @@ def parse_set_input(text: str, exercise_type: ExerciseType) -> dict:
                 
             dur_val = parse_duration_string(rem_text)
             if dist_val is not None and dur_val is not None:
-                return {"distance": dist_val, "duration": dur_val}
+                if dist_val > 0 and dur_val > 0:
+                    return {"distance": dist_val, "duration": dur_val}
 
     elif exercise_type == ExerciseType.bodyweight:
         cleaned = re.sub(r'(?i)(раз|reps|повторений|повт)', '', text)
         parts = cleaned.strip().split()
         if len(parts) >= 1:
             try:
-                return {"reps": int(parts[0])}
+                reps = int(parts[0])
+                if reps > 0:
+                    return {"reps": reps}
             except ValueError:
                 pass
 
     elif exercise_type == ExerciseType.timed:
         dur_val = parse_duration_string(text)
-        if dur_val is not None:
+        if dur_val is not None and dur_val > 0:
             return {"duration": dur_val}
             
     return {}
@@ -136,7 +142,7 @@ def format_set_text(s) -> str:
     - duration: '45 сек'
     """
     if getattr(s, "reps", None) and getattr(s, "weight", None):
-        return f"{s.reps} повторений, {s.weight:g} кг"
+        return f"{s.weight:g} кг на {s.reps} повторений"
     elif getattr(s, "reps", None):
         return f"{s.reps} повторений"
     elif getattr(s, "distance", None) and getattr(s, "duration", None):

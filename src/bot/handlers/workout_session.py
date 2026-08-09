@@ -49,7 +49,7 @@ async def show_templates_start_page(callback: CallbackQuery, page: int):
 async def start_template_workout(callback: CallbackQuery, callback_data: TemplateCallback, state: FSMContext):
     await cleanup_previous_file(callback, state)
     await state.set_state(WorkoutSessionState.waiting_for_supplement)
-    await state.update_data(workout_id=callback_data.id)
+    await state.update_data(workout_id=callback_data.id, prompt_msg_id=callback.message.message_id)
     keyboard = [
         [InlineKeyboardButton(text="Пропустить", callback_data=MenuCallback(action="skip_supplement").pack())],
         [InlineKeyboardButton(text="❌ Отмена", callback_data=TemplateCallback(action="view", id=callback_data.id).pack())]
@@ -64,18 +64,29 @@ async def skip_workout_supplement(callback: CallbackQuery, state: FSMContext):
     await state.update_data(supplement=None)
     await state.set_state(WorkoutSessionState.waiting_for_started_at)
     await callback.message.edit_text(
-        "Укажите время начала тренировки (в формате 'YYYY-MM-DD HH:MM' или просто нажмите 'Сейчас'):",
+        "Укажите время начала тренировки (в формате 'DD-MM-YYYY HH:MM' или просто нажмите 'Сейчас'):",
         reply_markup=get_time_now_menu()
     )
 
 @router.message(WorkoutSessionState.waiting_for_supplement)
 async def process_workout_supplement(message: Message, state: FSMContext):
+    try: await message.delete()
+    except: pass
+    if not message.text: return
+    
     await state.update_data(supplement=message.text.strip())
     await state.set_state(WorkoutSessionState.waiting_for_started_at)
-    await message.answer(
-        "Укажите время начала тренировки (в формате 'YYYY-MM-DD HH:MM' или просто нажмите 'Сейчас'):",
-        reply_markup=get_time_now_menu()
-    )
+    
+    data = await state.get_data()
+    if data.get("prompt_msg_id"):
+        try:
+            await message.bot.edit_message_text(
+                "Укажите время начала тренировки (в формате 'DD-MM-YYYY HH:MM' или просто нажмите 'Сейчас'):",
+                chat_id=message.chat.id,
+                message_id=data["prompt_msg_id"],
+                reply_markup=get_time_now_menu()
+            )
+        except: pass
 
 @router.callback_query(WorkoutSessionState.waiting_for_started_at, MenuCallback.filter(F.action == "time_now"))
 async def process_started_at_now(callback: CallbackQuery, state: FSMContext):
@@ -84,12 +95,32 @@ async def process_started_at_now(callback: CallbackQuery, state: FSMContext):
 
 @router.message(WorkoutSessionState.waiting_for_started_at)
 async def process_started_at_manual(message: Message, state: FSMContext):
+    try: await message.delete()
+    except: pass
+    if not message.text: return
+    
+    data = await state.get_data()
+    prompt_msg_id = data.get("prompt_msg_id")
+    
     try:
         text = message.text.strip()
-        started_at = datetime.fromisoformat(text.replace('/', '-'))
+        started_at = datetime.strptime(text, "%d-%m-%Y %H:%M")
+        
+        if prompt_msg_id:
+            try: await message.bot.delete_message(message.chat.id, prompt_msg_id)
+            except: pass
+            
         await create_and_start_workout_session(message, state, started_at)
     except ValueError:
-        await message.answer(Messages.INVALID_TIME_FORMAT, reply_markup=get_time_now_menu())
+        if prompt_msg_id:
+            try:
+                await message.bot.edit_message_text(
+                    f"❌ Неверный формат времени!\n\nУкажите время начала тренировки (в формате 'DD-MM-YYYY HH:MM' или просто нажмите 'Сейчас'):",
+                    chat_id=message.chat.id,
+                    message_id=prompt_msg_id,
+                    reply_markup=get_time_now_menu()
+                )
+            except: pass
 
 async def create_and_start_workout_session(message_or_callback, state: FSMContext, started_at: datetime):
     data = await state.get_data()
@@ -129,7 +160,7 @@ async def show_active_workout(message_or_callback, state: FSMContext, note_id: i
         note = await get_workout_note(session, note_id)
         if not note: return
         
-        text = Messages.ACTIVE_WORKOUT_TITLE.format(brief=note.brief, started_at=note.started_at.strftime('%Y-%m-%d %H:%M'))
+        text = Messages.ACTIVE_WORKOUT_TITLE.format(brief=note.brief, started_at=note.started_at.strftime('%d-%m-%Y %H:%M'))
         
         for i, ex_note in enumerate(note.exercise_notes, 1):
             text += f"{i}. {ex_note.exercise.name}: {len(ex_note.sets)} подх.\n"
@@ -155,7 +186,7 @@ async def show_active_exercise_page(target: CallbackQuery | Message, note_id: in
             text += f"💬 Заметка: {ex_note.notes}\n"
             
         hints = {
-            "strength": "Отправьте повторения и вес (например: '10x50', '12 60.5')",
+            "strength": "Отправьте вес и повторения (например: '50x10', '60.5 12')",
             "cardio": "Отправьте дистанцию и время (например: '2.5км 15мин', '500м 45с')",
             "bodyweight": "Отправьте количество повторений (например: '15', '20 раз')",
             "timed": "Отправьте время выполнения (например: '60', '1 мин 30 с')"
@@ -239,6 +270,10 @@ async def cancel_exercise_note_text(callback: CallbackQuery, state: FSMContext):
 
 @router.message(WorkoutSessionState.waiting_for_edit_notes)
 async def process_exercise_note_text(message: Message, state: FSMContext):
+    try: await message.delete()
+    except: pass
+    if not message.text: return
+    
     data = await state.get_data()
     ex_note_id = data.get("current_ex_note_id")
     note_id = data.get("note_id")
@@ -246,10 +281,6 @@ async def process_exercise_note_text(message: Message, state: FSMContext):
         from src.services.exercise import update_exercise_note
         await update_exercise_note(session, ex_note_id, notes=message.text.strip())
     await state.set_state(WorkoutSessionState.active)
-    try:
-        await message.delete()
-    except Exception:
-        pass
     await show_active_exercise_page(message, note_id, ex_note_id, state)
 
 @router.message(WorkoutSessionState.active)
@@ -343,67 +374,82 @@ async def active_workout_settings(callback: CallbackQuery, state: FSMContext):
 async def active_wset_brief(callback: CallbackQuery, state: FSMContext):
     note_id = int(callback.data.split("_")[2])
     await state.set_state(WorkoutSessionState.waiting_for_edit_brief)
+    await state.update_data(prompt_msg_id=callback.message.message_id)
     keyboard = [[InlineKeyboardButton(text="❌ Отмена", callback_data=MenuCallback(action=f"wsettings_{note_id}").pack())]]
     await callback.message.edit_text("Введите новое название для тренировки:", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
 @router.message(WorkoutSessionState.waiting_for_edit_brief)
 async def process_active_wset_brief(message: Message, state: FSMContext):
+    try: await message.delete()
+    except: pass
+    if not message.text or not message.text.strip(): return
+    
     data = await state.get_data()
     note_id = data["note_id"]
+    prompt_msg_id = data.get("prompt_msg_id")
+    
     async for session in get_db_session():
         from src.services.workout import update_workout_note
         await update_workout_note(session, note_id, brief=message.text.strip())
+        
     await state.set_state(WorkoutSessionState.active)
-    try:
-        await message.delete()
-    except Exception:
-        pass
+    
     async for session in get_db_session():
         note = await get_workout_note(session, note_id)
         text = f"⚙️ Настройки тренировки '{note.brief}':\nВыберите параметр для изменения или удаления тренировки."
-        try:
-            await message.bot.edit_message_text(chat_id=message.chat.id, message_id=data.get("current_card_msg_id"), text=text, reply_markup=get_active_workout_settings_menu(note_id))
-        except Exception:
-            msg = await message.answer(text, reply_markup=get_active_workout_settings_menu(note_id))
-            await state.update_data(current_card_msg_id=msg.message_id)
+        if prompt_msg_id:
+            try:
+                await message.bot.edit_message_text(text, chat_id=message.chat.id, message_id=prompt_msg_id, reply_markup=get_active_workout_settings_menu(note_id))
+                return
+            except: pass
+        msg = await message.answer(text, reply_markup=get_active_workout_settings_menu(note_id))
+        await state.update_data(current_card_msg_id=msg.message_id)
 
 @router.callback_query(WorkoutSessionState.active, MenuCallback.filter(F.action.startswith("wset_desc_")))
 async def active_wset_desc(callback: CallbackQuery, state: FSMContext):
     note_id = int(callback.data.split("_")[2])
     await state.set_state(WorkoutSessionState.waiting_for_edit_desc)
+    await state.update_data(prompt_msg_id=callback.message.message_id)
     keyboard = [[InlineKeyboardButton(text="❌ Отмена", callback_data=MenuCallback(action=f"wsettings_{note_id}").pack())]]
     await callback.message.edit_text("Введите новое описание для тренировки:", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
 @router.message(WorkoutSessionState.waiting_for_edit_desc)
 async def process_active_wset_desc(message: Message, state: FSMContext):
+    try: await message.delete()
+    except: pass
+    if not message.text: return
+    
     data = await state.get_data()
     note_id = data["note_id"]
+    prompt_msg_id = data.get("prompt_msg_id")
+    
     async for session in get_db_session():
         from src.services.workout import update_workout_note
         await update_workout_note(session, note_id, description=message.text.strip())
+        
     await state.set_state(WorkoutSessionState.active)
-    try:
-        await message.delete()
-    except Exception:
-        pass
+    
     async for session in get_db_session():
         note = await get_workout_note(session, note_id)
         text = f"⚙️ Настройки тренировки '{note.brief}':\nВыберите параметр для изменения или удаления тренировки."
-        try:
-            await message.bot.edit_message_text(chat_id=message.chat.id, message_id=data.get("current_card_msg_id"), text=text, reply_markup=get_active_workout_settings_menu(note_id))
-        except Exception:
-            msg = await message.answer(text, reply_markup=get_active_workout_settings_menu(note_id))
-            await state.update_data(current_card_msg_id=msg.message_id)
+        if prompt_msg_id:
+            try:
+                await message.bot.edit_message_text(text, chat_id=message.chat.id, message_id=prompt_msg_id, reply_markup=get_active_workout_settings_menu(note_id))
+                return
+            except: pass
+        msg = await message.answer(text, reply_markup=get_active_workout_settings_menu(note_id))
+        await state.update_data(current_card_msg_id=msg.message_id)
 
 @router.callback_query(WorkoutSessionState.active, MenuCallback.filter(F.action.startswith("wset_time_")))
 async def active_wset_time(callback: CallbackQuery, state: FSMContext):
     note_id = int(callback.data.split("_")[2])
     await state.set_state(WorkoutSessionState.waiting_for_edit_time)
+    await state.update_data(prompt_msg_id=callback.message.message_id)
     keyboard = [
         [InlineKeyboardButton(text="Сейчас", callback_data=MenuCallback(action=f"wset_timenow_{note_id}").pack())],
         [InlineKeyboardButton(text="❌ Отмена", callback_data=MenuCallback(action=f"wsettings_{note_id}").pack())]
     ]
-    await callback.message.edit_text("Введите новое время начала в формате 'YYYY-MM-DD HH:MM' или нажмите 'Сейчас':", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+    await callback.message.edit_text("Введите новое время начала в формате 'DD-MM-YYYY HH:MM' или нажмите 'Сейчас':", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
 @router.callback_query(WorkoutSessionState.waiting_for_edit_time, MenuCallback.filter(F.action.startswith("wset_timenow_")))
 async def process_active_wset_timenow(callback: CallbackQuery, state: FSMContext):
@@ -419,29 +465,44 @@ async def process_active_wset_timenow(callback: CallbackQuery, state: FSMContext
 
 @router.message(WorkoutSessionState.waiting_for_edit_time)
 async def process_active_wset_time(message: Message, state: FSMContext):
+    try: await message.delete()
+    except: pass
+    if not message.text: return
+    
     data = await state.get_data()
     note_id = data["note_id"]
+    prompt_msg_id = data.get("prompt_msg_id")
+    
     try:
         text_val = message.text.strip()
-        new_time = datetime.fromisoformat(text_val.replace('/', '-'))
+        new_time = datetime.strptime(text_val, "%d-%m-%Y %H:%M")
+        
         async for session in get_db_session():
             from src.services.workout import update_workout_note
             await update_workout_note(session, note_id, started_at=new_time)
+            
         await state.set_state(WorkoutSessionState.active)
-        try:
-            await message.delete()
-        except Exception:
-            pass
+        
         async for session in get_db_session():
             note = await get_workout_note(session, note_id)
             text = f"⚙️ Настройки тренировки '{note.brief}':\nВыберите параметр для изменения или удаления тренировки."
-            try:
-                await message.bot.edit_message_text(chat_id=message.chat.id, message_id=data.get("current_card_msg_id"), text=text, reply_markup=get_active_workout_settings_menu(note_id))
-            except Exception:
-                msg = await message.answer(text, reply_markup=get_active_workout_settings_menu(note_id))
-                await state.update_data(current_card_msg_id=msg.message_id)
+            if prompt_msg_id:
+                try:
+                    await message.bot.edit_message_text(text, chat_id=message.chat.id, message_id=prompt_msg_id, reply_markup=get_active_workout_settings_menu(note_id))
+                    return
+                except: pass
+            msg = await message.answer(text, reply_markup=get_active_workout_settings_menu(note_id))
+            await state.update_data(current_card_msg_id=msg.message_id)
     except ValueError:
-        await message.answer(Messages.INVALID_TIME_FORMAT)
+        if prompt_msg_id:
+            try:
+                await message.bot.edit_message_text(
+                    f"❌ Неверный формат времени!\n\nВведите новое время начала в формате 'DD-MM-YYYY HH:MM' или нажмите 'Сейчас':",
+                    chat_id=message.chat.id,
+                    message_id=prompt_msg_id,
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Сейчас", callback_data=MenuCallback(action=f"wset_timenow_{note_id}").pack())], [InlineKeyboardButton(text="❌ Отмена", callback_data=MenuCallback(action=f"wsettings_{note_id}").pack())]])
+                )
+            except: pass
 
 @router.callback_query(WorkoutSessionState.active, MenuCallback.filter(F.action.startswith("wset_del_")))
 async def active_wset_del_start(callback: CallbackQuery, state: FSMContext):
@@ -460,18 +521,34 @@ async def active_wset_del_start(callback: CallbackQuery, state: FSMContext):
 
 @router.message(WorkoutSessionState.waiting_for_delete_confirm)
 async def process_active_wset_del_confirm(message: Message, state: FSMContext):
+    try: await message.delete()
+    except: pass
+    if not message.text: return
+    
     data = await state.get_data()
     expected = data.get("expected_brief", "")
+    
     if message.text.strip() == expected:
         note_id = data["note_id"]
         async for session in get_db_session():
             from src.services.workout import delete_workout_note
             await delete_workout_note(session, note_id)
+            
         await state.clear()
-        try:
-            await message.delete()
-        except Exception:
-            pass
-        await message.answer("Тренировка успешно удалена.", reply_markup=get_main_menu())
+        
+        if data.get("prompt_msg_id"):
+            try: await message.bot.delete_message(message.chat.id, data["prompt_msg_id"])
+            except: pass
+            
+        await message.answer("✅ Тренировка успешно удалена.", reply_markup=get_main_menu())
     else:
-        await message.answer("Название не совпадает. Попробуйте снова или нажмите 'Отмена'.")
+        if data.get("prompt_msg_id"):
+            try:
+                await message.bot.edit_message_text(
+                    f"❌ Название не совпадает.\n\nДля удаления активной тренировки введите её название: `{expected}`",
+                    chat_id=message.chat.id,
+                    message_id=data["prompt_msg_id"],
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data=MenuCallback(action=f"wsettings_{data['note_id']}").pack())]]),
+                    parse_mode="Markdown"
+                )
+            except: pass

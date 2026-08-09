@@ -39,7 +39,7 @@ class Messages:
     INVALID_TIME_FORMAT = "Неверный формат. Попробуйте 'YYYY-MM-DD HH:MM' или нажмите 'Сейчас'."
     WORKOUT_CREATE_ERROR = "Ошибка создания тренировки."
     ACTIVE_WORKOUT_TITLE = "🔥 Тренировка: {brief}\nНачалась: {started_at}\n\nУпражнения:\n"
-    SELECT_EX_FOR_SET = "🏋️ Выбрано: {name}\nОтправьте в чат данные подхода (например: '10x50', '15', '10 км 30 мин').\n\nТекущие подходы:\n"
+    SELECT_EX_FOR_SET = "🏋️ Выбрано: {name}\nОтправьте в чат данные подхода (например: '50x10', '15', '10 км 30 мин').\n\nТекущие подходы:\n"
     EMPTY_SETS = "  (нет подходов)"
     NEED_SELECT_EX_FIRST = "Сначала выберите упражнение из списка выше для добавления подхода."
     IN_DEVELOPMENT = "В разработке"
@@ -75,7 +75,7 @@ class Messages:
     def get_set_prompt(cls, ex_type, ex_name: str) -> str:
         type_str = getattr(ex_type, "value", str(ex_type))
         if type_str == "strength":
-            return f"🏋️ Выбрано: {ex_name}\nОтправьте в чат повторения и вес (например: '10x50' или '15'):\n\nТекущие подходы:\n"
+            return f"🏋️ Выбрано: {ex_name}\nОтправьте в чат вес и повторения (например: '50x10' или '15'):\n\nТекущие подходы:\n"
         elif type_str == "cardio":
             return f"🏃 Выбрано: {ex_name}\nОтправьте в чат дистанцию в км и время в мин (например: '5 за 25' или '10 км 50 мин', либо просто время '30 мин'):\n\nТекущие подходы:\n"
         elif type_str == "bodyweight":

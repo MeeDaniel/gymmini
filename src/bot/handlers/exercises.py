@@ -77,15 +77,25 @@ async def view_exercise(callback: CallbackQuery, callback_data: ExerciseCallback
 async def edit_exercise_name_start(callback: CallbackQuery, callback_data: ExerciseCallback, state: FSMContext):
     await cleanup_previous_file(callback, state)
     await state.set_state(EditExerciseState.waiting_for_name)
-    await state.update_data(exercise_id=callback_data.id)
+    await state.update_data(exercise_id=callback_data.id, prompt_msg_id=callback.message.message_id)
     keyboard = [[InlineKeyboardButton(text="❌ Отмена", callback_data=ExerciseCallback(action="view", id=callback_data.id).pack())]]
     await edit_message_text_or_caption(callback.message, Messages.ASK_NEW_EXERCISE_NAME, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
 @router.message(EditExerciseState.waiting_for_name)
 async def process_edit_exercise_name(message: Message, state: FSMContext):
+    try: await message.delete()
+    except Exception: pass
+    
+    if not message.text or not message.text.strip(): return
+    
     data = await state.get_data()
     ex_id = data.get("exercise_id")
-    new_name = message.text
+    new_name = message.text.strip()
+    
+    if data.get("prompt_msg_id"):
+        try: await message.bot.delete_message(message.chat.id, data["prompt_msg_id"])
+        except: pass
+
     async for session in get_db_session():
         ex = await get_exercise(session, ex_id)
         if ex:
@@ -120,18 +130,26 @@ async def process_edit_exercise_type(callback: CallbackQuery, state: FSMContext)
 async def edit_exercise_desc_start(callback: CallbackQuery, callback_data: ExerciseCallback, state: FSMContext):
     await cleanup_previous_file(callback, state)
     await state.set_state(EditExerciseState.waiting_for_desc)
-    await state.update_data(exercise_id=callback_data.id)
+    await state.update_data(exercise_id=callback_data.id, prompt_msg_id=callback.message.message_id)
     keyboard = [[InlineKeyboardButton(text="❌ Отмена", callback_data=ExerciseCallback(action="view", id=callback_data.id).pack())]]
     await edit_message_text_or_caption(callback.message, Messages.ASK_NEW_EXERCISE_DESC, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
 @router.message(EditExerciseState.waiting_for_desc)
 async def process_edit_exercise_desc(message: Message, state: FSMContext):
-    data = await state.get_data()
-    ex_id = data.get("exercise_id")
+    try: await message.delete()
+    except: pass
+    
     new_desc, err = await extract_description_text(message)
     if err:
-        await message.answer(err)
         return
+        
+    data = await state.get_data()
+    ex_id = data.get("exercise_id")
+    
+    if data.get("prompt_msg_id"):
+        try: await message.bot.delete_message(message.chat.id, data["prompt_msg_id"])
+        except: pass
+
     async for session in get_db_session():
         ex = await get_exercise(session, ex_id)
         if ex:
@@ -144,29 +162,32 @@ async def process_edit_exercise_desc(message: Message, state: FSMContext):
 async def edit_exercise_photo_start(callback: CallbackQuery, callback_data: ExerciseCallback, state: FSMContext):
     await cleanup_previous_file(callback, state)
     await state.set_state(EditExerciseState.waiting_for_photo)
-    await state.update_data(exercise_id=callback_data.id)
+    await state.update_data(exercise_id=callback_data.id, prompt_msg_id=callback.message.message_id)
     keyboard = [[InlineKeyboardButton(text="❌ Отмена", callback_data=ExerciseCallback(action="view", id=callback_data.id).pack())]]
     await edit_message_text_or_caption(callback.message, "Отправьте новое фото для упражнения:", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
 @router.message(EditExerciseState.waiting_for_photo)
 async def process_edit_exercise_photo(message: Message, state: FSMContext):
+    try: await message.delete()
+    except: pass
+    
     if not message.photo:
-        await message.answer("Пожалуйста, отправьте фото.")
         return
         
     photo = message.photo[-1]
     if photo.file_size > 4 * 1024 * 1024:
-        await message.answer(Messages.FILE_TOO_LARGE)
         return
         
-    os.makedirs(MEDIA_DIR, exist_ok=True)
     file_path = generate_image_path()
-    
     bot = message.bot
     await bot.download(photo, destination=file_path)
     
     data = await state.get_data()
     ex_id = data.get("exercise_id")
+    
+    if data.get("prompt_msg_id"):
+        try: await message.bot.delete_message(message.chat.id, data["prompt_msg_id"])
+        except: pass
     
     async for session in get_db_session():
         ex = await get_exercise(session, ex_id)
@@ -234,14 +255,29 @@ async def process_delete_exercise_confirm(message: Message, state: FSMContext):
 @router.callback_query(MenuCallback.filter(F.action == "create_exercise"))
 async def create_exercise_start(callback: CallbackQuery, state: FSMContext):
     await state.set_state(CreateExerciseState.waiting_for_name)
+    await state.update_data(prompt_msg_id=callback.message.message_id)
     from src.bot.keyboards import get_cancel_button
     await callback.message.edit_text(Messages.ASK_EXERCISE_NAME, reply_markup=InlineKeyboardMarkup(inline_keyboard=[get_cancel_button()]))
 
 @router.message(CreateExerciseState.waiting_for_name)
 async def process_exercise_name(message: Message, state: FSMContext):
-    await state.update_data(name=message.text)
+    try: await message.delete()
+    except: pass
+    if not message.text or not message.text.strip(): return
+    
+    await state.update_data(name=message.text.strip())
     await state.set_state(CreateExerciseState.waiting_for_type)
-    await message.answer("Выберите тип упражнения (определяет, какие данные будут записываться в подходы):", reply_markup=get_exercise_types_menu())
+    
+    data = await state.get_data()
+    if data.get("prompt_msg_id"):
+        try:
+            await message.bot.edit_message_text(
+                "Выберите тип упражнения (определяет, какие данные будут записываться в подходы):",
+                chat_id=message.chat.id,
+                message_id=data["prompt_msg_id"],
+                reply_markup=get_exercise_types_menu()
+            )
+        except: pass
 
 @router.callback_query(CreateExerciseState.waiting_for_type, F.data.startswith("extype_"))
 async def process_exercise_type(callback: CallbackQuery, state: FSMContext):
@@ -256,18 +292,14 @@ async def process_exercise_photo_skip(callback: CallbackQuery, state: FSMContext
 
 @router.message(CreateExerciseState.waiting_for_photo)
 async def process_exercise_photo(message: Message, state: FSMContext):
-    if not message.photo:
-        await message.answer(Messages.INVALID_PHOTO_INPUT, reply_markup=get_skip_photo_menu())
-        return
+    try: await message.delete()
+    except: pass
+    if not message.photo: return
     
     photo = message.photo[-1]
-    if photo.file_size > 4 * 1024 * 1024:
-        await message.answer(Messages.FILE_TOO_LARGE)
-        return
+    if photo.file_size > 4 * 1024 * 1024: return
         
-    os.makedirs(MEDIA_DIR, exist_ok=True)
     file_path = generate_image_path()
-    
     bot = message.bot
     await bot.download(photo, destination=file_path)
     
@@ -288,9 +320,18 @@ async def save_new_exercise(user_id: int, message: Message, state: FSMContext, i
     data = await state.get_data()
     ex_type = ExerciseType(data['type'])
     
+    if data.get("prompt_msg_id"):
+        try: await message.bot.delete_message(message.chat.id, data["prompt_msg_id"])
+        except: pass
+        
     async for session in get_db_session():
         await create_exercise(session, user_id, data['name'], ex_type, None, image_path) 
         
     await state.clear()
-    await message.answer(Messages.EXERCISE_CREATED.format(name=data['name']))
-    await show_exercises_page_answer(message, user_id=user_id)
+    
+    async for session in get_db_session():
+        exercises = await get_exercises_for_user(session, user_id)
+        total = len(exercises)
+        page_items = exercises[0:PER_PAGE]
+        text = f"✅ Упражнение \"{data['name']}\" успешно создано!\n\n{Messages.YOUR_EXERCISES}"
+        await message.answer(text, reply_markup=get_exercises_menu(page_items, 1, total))

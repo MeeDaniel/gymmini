@@ -56,7 +56,7 @@ async def show_history_card(target, note_id: int, state: FSMContext | None = Non
             return
             
         text = f"📖 Тренировка: {note.brief}\n"
-        text += f"Дата начала: {note.started_at.strftime('%Y-%m-%d %H:%M')}\n"
+        text += f"Дата начала: {note.started_at.strftime('%d-%m-%Y %H:%M')}\n"
         desc_str = await format_description_preview(note.description, title=note.brief)
         if note.description:
             text += f"Описание:\n{desc_str}\n"
@@ -103,18 +103,27 @@ async def view_history(callback: CallbackQuery, callback_data: HistoryCallback, 
 async def edit_history_brief_start(callback: CallbackQuery, callback_data: HistoryCallback, state: FSMContext):
     await cleanup_previous_file(callback, state)
     await state.set_state(EditHistoryState.waiting_for_brief)
-    await state.update_data(note_id=callback_data.id)
+    await state.update_data(note_id=callback_data.id, prompt_msg_id=callback.message.message_id)
     keyboard = [[InlineKeyboardButton(text="❌ Отмена", callback_data=HistoryCallback(action="view", id=callback_data.id).pack())]]
     await edit_message_text_or_caption(callback.message, Messages.ASK_NEW_HISTORY_BRIEF, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
 @router.message(EditHistoryState.waiting_for_brief)
 async def process_edit_history_brief(message: Message, state: FSMContext):
+    try: await message.delete()
+    except: pass
+    if not message.text or not message.text.strip(): return
+    
     data = await state.get_data()
     n_id = data.get("note_id")
+    
+    if data.get("prompt_msg_id"):
+        try: await message.bot.delete_message(message.chat.id, data["prompt_msg_id"])
+        except: pass
+        
     async for session in get_db_session():
         n = await get_workout_note(session, n_id)
         if n:
-            n.brief = message.text
+            n.brief = message.text.strip()
             await session.commit()
     await state.clear()
     await show_history_card(message, n_id, state)
@@ -123,18 +132,25 @@ async def process_edit_history_brief(message: Message, state: FSMContext):
 async def edit_history_desc_start(callback: CallbackQuery, callback_data: HistoryCallback, state: FSMContext):
     await cleanup_previous_file(callback, state)
     await state.set_state(EditHistoryState.waiting_for_desc)
-    await state.update_data(note_id=callback_data.id)
+    await state.update_data(note_id=callback_data.id, prompt_msg_id=callback.message.message_id)
     keyboard = [[InlineKeyboardButton(text="❌ Отмена", callback_data=HistoryCallback(action="view", id=callback_data.id).pack())]]
     await edit_message_text_or_caption(callback.message, Messages.ASK_NEW_HISTORY_DESC, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
 @router.message(EditHistoryState.waiting_for_desc)
 async def process_edit_history_desc(message: Message, state: FSMContext):
+    try: await message.delete()
+    except: pass
+    
+    new_desc, err = await extract_description_text(message)
+    if err: return
+        
     data = await state.get_data()
     n_id = data.get("note_id")
-    new_desc, err = await extract_description_text(message)
-    if err:
-        await message.answer(err)
-        return
+    
+    if data.get("prompt_msg_id"):
+        try: await message.bot.delete_message(message.chat.id, data["prompt_msg_id"])
+        except: pass
+        
     async for session in get_db_session():
         n = await get_workout_note(session, n_id)
         if n:
@@ -147,14 +163,14 @@ async def process_edit_history_desc(message: Message, state: FSMContext):
 async def edit_history_time_start(callback: CallbackQuery, callback_data: HistoryCallback, state: FSMContext):
     await cleanup_previous_file(callback, state)
     await state.set_state(EditHistoryState.waiting_for_time)
-    await state.update_data(note_id=callback_data.id)
+    await state.update_data(note_id=callback_data.id, prompt_msg_id=callback.message.message_id)
     keyboard = [
         [InlineKeyboardButton(text="🕒 Сейчас", callback_data=HistoryCallback(action="time_now", id=callback_data.id).pack())],
         [InlineKeyboardButton(text="❌ Отмена", callback_data=HistoryCallback(action="view", id=callback_data.id).pack())]
     ]
     await edit_message_text_or_caption(
         callback.message,
-        Messages.ASK_NEW_HISTORY_TIME,
+        "Введите новое время начала в формате 'DD-MM-YYYY HH:MM' или нажмите 'Сейчас':",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
     )
 
@@ -171,11 +187,22 @@ async def process_history_time_now(callback: CallbackQuery, callback_data: Histo
 
 @router.message(EditHistoryState.waiting_for_time)
 async def process_edit_history_time(message: Message, state: FSMContext):
+    try: await message.delete()
+    except: pass
+    if not message.text: return
+    
     data = await state.get_data()
     n_id = data.get("note_id")
+    prompt_msg_id = data.get("prompt_msg_id")
+    
     from datetime import datetime
     try:
-        new_time = datetime.strptime(message.text.strip(), "%Y-%m-%d %H:%M")
+        new_time = datetime.strptime(message.text.strip(), "%d-%m-%Y %H:%M")
+        
+        if prompt_msg_id:
+            try: await message.bot.delete_message(message.chat.id, prompt_msg_id)
+            except: pass
+            
         async for session in get_db_session():
             n = await get_workout_note(session, n_id)
             if n:
@@ -184,7 +211,19 @@ async def process_edit_history_time(message: Message, state: FSMContext):
         await state.clear()
         await show_history_card(message, n_id, state)
     except ValueError:
-        await message.answer(Messages.INVALID_TIME_FORMAT)
+        if prompt_msg_id:
+            try:
+                keyboard = [
+                    [InlineKeyboardButton(text="🕒 Сейчас", callback_data=HistoryCallback(action="time_now", id=n_id).pack())],
+                    [InlineKeyboardButton(text="❌ Отмена", callback_data=HistoryCallback(action="view", id=n_id).pack())]
+                ]
+                await message.bot.edit_message_text(
+                    f"❌ Неверный формат времени!\n\nВведите новое время начала в формате 'DD-MM-YYYY HH:MM' или нажмите 'Сейчас':",
+                    chat_id=message.chat.id,
+                    message_id=prompt_msg_id,
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+                )
+            except: pass
 
 @router.callback_query(HistoryCallback.filter(F.action == "delete"))
 async def delete_history_start(callback: CallbackQuery, callback_data: HistoryCallback, state: FSMContext):
@@ -193,23 +232,41 @@ async def delete_history_start(callback: CallbackQuery, callback_data: HistoryCa
         n = await get_workout_note(session, callback_data.id)
         if not n: return
         await state.set_state(DeleteHistoryState.waiting_for_confirm)
-        await state.update_data(note_id=n.id, expected_brief=n.brief)
+        await state.update_data(note_id=n.id, expected_brief=n.brief, prompt_msg_id=callback.message.message_id)
         text = Messages.ASK_DELETE_HISTORY_CONFIRM.format(brief=n.brief)
         keyboard = [[InlineKeyboardButton(text=Messages.BTN_CANCEL, callback_data=HistoryCallback(action="view", id=n.id).pack())]]
         await edit_message_text_or_caption(callback.message, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
 @router.message(DeleteHistoryState.waiting_for_confirm)
 async def process_delete_history_confirm(message: Message, state: FSMContext):
+    try: await message.delete()
+    except: pass
+    if not message.text: return
+    
     data = await state.get_data()
     n_id = data.get("note_id")
     expected_brief = data.get("expected_brief")
+    prompt_msg_id = data.get("prompt_msg_id")
+    
     if message.text.strip() == expected_brief.strip():
+        if prompt_msg_id:
+            try: await message.bot.delete_message(message.chat.id, prompt_msg_id)
+            except: pass
+            
         async for session in get_db_session():
             await delete_workout_note(session, n_id)
         await state.clear()
-        await message.answer(Messages.HISTORY_DELETED)
-        await show_history_page_answer(message, user_id=message.from_user.id)
+        
+        async for session in get_db_session():
+            notes = await get_workout_notes_for_user(session, message.from_user.id)
+            total = len(notes)
+            page_items = notes[0:PER_PAGE]
+            text = f"✅ {Messages.HISTORY_DELETED}\n\n{Messages.YOUR_HISTORY}"
+            await message.answer(text, reply_markup=get_history_menu(page_items, 1, total))
     else:
-        await message.answer(Messages.DELETE_CONFIRM_MISMATCH)
-        await state.clear()
-        await show_history_card(message, n_id, state)
+        if prompt_msg_id:
+            try:
+                keyboard = [[InlineKeyboardButton(text=Messages.BTN_CANCEL, callback_data=HistoryCallback(action="view", id=n_id).pack())]]
+                text = f"❌ Название не совпадает.\n\n" + Messages.ASK_DELETE_HISTORY_CONFIRM.format(brief=expected_brief)
+                await message.bot.edit_message_text(text, chat_id=message.chat.id, message_id=prompt_msg_id, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+            except: pass

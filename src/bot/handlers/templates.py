@@ -51,11 +51,21 @@ async def show_templates_page_answer(message: Message, user_id: int | None = Non
 @router.callback_query(MenuCallback.filter(F.action == "create_template"))
 async def create_template_start(callback: CallbackQuery, state: FSMContext):
     await state.set_state(CreateWorkoutState.waiting_for_brief)
+    await state.update_data(prompt_msg_id=callback.message.message_id)
     await callback.message.edit_text(Messages.ASK_WORKOUT_BRIEF, reply_markup=InlineKeyboardMarkup(inline_keyboard=[get_cancel_button()]))
 
 @router.message(CreateWorkoutState.waiting_for_brief)
 async def process_template_brief(message: Message, state: FSMContext):
-    brief = message.text
+    try: await message.delete()
+    except: pass
+    if not message.text or not message.text.strip(): return
+    brief = message.text.strip()
+    
+    data = await state.get_data()
+    if data.get("prompt_msg_id"):
+        try: await message.bot.delete_message(message.chat.id, data["prompt_msg_id"])
+        except: pass
+
     async for session in get_db_session():
         workout = await create_workout(session, message.from_user.id, brief)
         
@@ -64,7 +74,7 @@ async def process_template_brief(message: Message, state: FSMContext):
     # Automatically redirect to manage exercises
     async for session in get_db_session():
         workout_refreshed = await get_workout(session, workout.id)
-        text = Messages.TEMPLATE_MANAGE.format(brief=workout_refreshed.brief)
+        text = f"✅ Шаблон успешно создан!\n\n" + Messages.TEMPLATE_MANAGE.format(brief=workout_refreshed.brief)
         await message.answer(text, reply_markup=get_template_manage_menu(workout_refreshed.id, workout_refreshed.exercises))
 
 async def show_template_card(target, workout_id: int, state: FSMContext | None = None):
@@ -113,18 +123,27 @@ async def view_template(callback: CallbackQuery, callback_data: TemplateCallback
 async def edit_template_brief_start(callback: CallbackQuery, callback_data: TemplateCallback, state: FSMContext):
     await cleanup_previous_file(callback, state)
     await state.set_state(EditTemplateState.waiting_for_brief)
-    await state.update_data(workout_id=callback_data.id)
+    await state.update_data(workout_id=callback_data.id, prompt_msg_id=callback.message.message_id)
     keyboard = [[InlineKeyboardButton(text="❌ Отмена", callback_data=TemplateCallback(action="view", id=callback_data.id).pack())]]
     await edit_message_text_or_caption(callback.message, Messages.ASK_NEW_TEMPLATE_BRIEF, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
 @router.message(EditTemplateState.waiting_for_brief)
 async def process_edit_template_brief(message: Message, state: FSMContext):
+    try: await message.delete()
+    except: pass
+    if not message.text or not message.text.strip(): return
+    
     data = await state.get_data()
     w_id = data.get("workout_id")
+    
+    if data.get("prompt_msg_id"):
+        try: await message.bot.delete_message(message.chat.id, data["prompt_msg_id"])
+        except: pass
+        
     async for session in get_db_session():
         w = await get_workout(session, w_id)
         if w:
-            w.brief = message.text
+            w.brief = message.text.strip()
             await session.commit()
     await state.clear()
     await show_template_card(message, w_id, state)
@@ -133,18 +152,25 @@ async def process_edit_template_brief(message: Message, state: FSMContext):
 async def edit_template_desc_start(callback: CallbackQuery, callback_data: TemplateCallback, state: FSMContext):
     await cleanup_previous_file(callback, state)
     await state.set_state(EditTemplateState.waiting_for_desc)
-    await state.update_data(workout_id=callback_data.id)
+    await state.update_data(workout_id=callback_data.id, prompt_msg_id=callback.message.message_id)
     keyboard = [[InlineKeyboardButton(text="❌ Отмена", callback_data=TemplateCallback(action="view", id=callback_data.id).pack())]]
     await edit_message_text_or_caption(callback.message, Messages.ASK_NEW_TEMPLATE_DESC, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
 @router.message(EditTemplateState.waiting_for_desc)
 async def process_edit_template_desc(message: Message, state: FSMContext):
-    data = await state.get_data()
-    w_id = data.get("workout_id")
+    try: await message.delete()
+    except: pass
     new_desc, err = await extract_description_text(message)
     if err:
-        await message.answer(err)
         return
+        
+    data = await state.get_data()
+    w_id = data.get("workout_id")
+    
+    if data.get("prompt_msg_id"):
+        try: await message.bot.delete_message(message.chat.id, data["prompt_msg_id"])
+        except: pass
+        
     async for session in get_db_session():
         w = await get_workout(session, w_id)
         if w:
@@ -160,26 +186,44 @@ async def delete_template_start(callback: CallbackQuery, callback_data: Template
         w = await get_workout(session, callback_data.id)
         if not w: return
         await state.set_state(DeleteTemplateState.waiting_for_confirm)
-        await state.update_data(workout_id=w.id, expected_brief=w.brief)
+        await state.update_data(workout_id=w.id, expected_brief=w.brief, prompt_msg_id=callback.message.message_id)
         text = Messages.ASK_DELETE_TEMPLATE_CONFIRM.format(brief=w.brief)
         keyboard = [[InlineKeyboardButton(text=Messages.BTN_CANCEL, callback_data=TemplateCallback(action="view", id=w.id).pack())]]
         await edit_message_text_or_caption(callback.message, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
 @router.message(DeleteTemplateState.waiting_for_confirm)
 async def process_delete_template_confirm(message: Message, state: FSMContext):
+    try: await message.delete()
+    except: pass
+    if not message.text: return
+    
     data = await state.get_data()
     w_id = data.get("workout_id")
     expected_brief = data.get("expected_brief")
+    prompt_msg_id = data.get("prompt_msg_id")
+    
     if message.text.strip() == expected_brief.strip():
+        if prompt_msg_id:
+            try: await message.bot.delete_message(message.chat.id, prompt_msg_id)
+            except: pass
+        
         async for session in get_db_session():
             await delete_workout(session, w_id)
         await state.clear()
-        await message.answer(Messages.TEMPLATE_DELETED)
-        await show_templates_page_answer(message, user_id=message.from_user.id)
+        
+        async for session in get_db_session():
+            templates = await get_workouts_for_user(session, message.from_user.id)
+            total = len(templates)
+            page_items = templates[0:PER_PAGE]
+            text = f"✅ {Messages.TEMPLATE_DELETED}\n\n{Messages.YOUR_TEMPLATES}"
+            await message.answer(text, reply_markup=get_templates_menu(page_items, 1, total))
     else:
-        await message.answer(Messages.DELETE_CONFIRM_MISMATCH)
-        await state.clear()
-        await show_template_card(message, w_id, state)
+        if prompt_msg_id:
+            text = f"❌ Неверное название!\n\n" + Messages.ASK_DELETE_TEMPLATE_CONFIRM.format(brief=expected_brief)
+            keyboard = [[InlineKeyboardButton(text=Messages.BTN_CANCEL, callback_data=TemplateCallback(action="view", id=w_id).pack())]]
+            try:
+                await message.bot.edit_message_text(text, chat_id=message.chat.id, message_id=prompt_msg_id, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+            except: pass
 
 from src.bot.keyboards import get_template_manage_menu, get_template_add_exercise_menu
 from src.services.exercise import get_exercises_for_user

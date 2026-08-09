@@ -6,18 +6,12 @@ import logging
 import aiohttp
 from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardMarkup, InputMediaPhoto
 from aiogram.fsm.context import FSMContext
+from src.core.config import settings
 
-TELEGRAPH_ACCESS_TOKEN = "0f92ec1f2bf890844111b9904d54673fde41a015d161e1401ea893e0d7c1"
+telegraph_token = settings.telegraph_token
 
 async def create_telegraph_page(title: str, text: str) -> str | None:
     url = "https://api.telegra.ph/createPage"
-    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
-    text = re.sub(r'__(.+?)__', r'<b>\1</b>', text)
-    text = re.sub(r'\*(.+?)\*', r'<i>\1</i>', text)
-    text = re.sub(r'_(.+?)_', r'<i>\1</i>', text)
-    text = re.sub(r'`(.+?)`', r'<code>\1</code>', text)
-    text = re.sub(r'~~(.+?)~~', r'<s>\1</s>', text)
-    text = re.sub(r'\[(.+?)\]\((.+?)\)', r'<a href="\2">\1</a>', text)
     content = []
     for para in text.split("\n\n"):
         para = para.strip()
@@ -34,7 +28,7 @@ async def create_telegraph_page(title: str, text: str) -> str | None:
         content = [{"tag": "p", "children": ["(Описание отсутствует)"]}]
         
     payload = {
-        "access_token": TELEGRAPH_ACCESS_TOKEN,
+        "access_token": telegraph_token,
         "title": (title[:250] if title else "Описание"),
         "content": json.dumps(content, ensure_ascii=False),
         "return_content": "false"
@@ -92,17 +86,22 @@ async def extract_description_text(message: Message) -> tuple[str | None, str | 
     
     return None, "Пожалуйста, отправьте описание текстом или прикрепите файл .txt / .md."
 
+from aiogram.exceptions import TelegramBadRequest
+
 async def edit_message_text_or_caption(message: Message, text: str, reply_markup: InlineKeyboardMarkup | None = None):
     try:
         if message.photo:
             await message.edit_caption(caption=text, reply_markup=reply_markup)
         else:
             await message.edit_text(text=text, reply_markup=reply_markup)
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e).lower(): return
+        try: await message.delete()
+        except: pass
+        await message.answer(text, reply_markup=reply_markup)
     except Exception:
-        try:
-            await message.delete()
-        except Exception:
-            pass
+        try: await message.delete()
+        except: pass
         await message.answer(text, reply_markup=reply_markup)
 
 async def send_card_with_optional_file(
@@ -127,6 +126,8 @@ async def send_card_with_optional_file(
                 if not msg_target.photo:
                     await msg_target.edit_text(card_text, reply_markup=reply_markup)
                     return
+        except TelegramBadRequest as e:
+            if "message is not modified" in str(e).lower(): return
         except Exception:
             pass
             
